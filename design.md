@@ -65,3 +65,7 @@ issues with this design:
 choices:
 * should a provider be associated with a dependency? or should you match dependencies to providers when you configure your system? former reduces repetition but makes it harder to re-use providers for different dependencies.
   * I think it's worth it to make them associated with a dependency. they can abstract in other ways if they want to re-use a provider like that.
+
+changes:
+* provider bodies run at most once _per with-providers_. If a provider has a dependency, it must be re-evaluated
+when the dependency changes. you'd need reactive programming to do this optimally.

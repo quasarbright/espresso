@@ -1,50 +1,118 @@
 #lang racket/base
 
+(module+ test (require rackunit))
+(provide)
+
+(require racket/function
+         racket/promise
+         racket/set
+         racket/hash)
+
+(struct dependency [guard] #:transparent)
+; A Dependency is a
+#;(dependency predicate?)
+; Represents an injected dependency whose values must satisfy 'guard'
+
+(struct provider [dependency thunk] #:transparent)
+; A Provider is a
+#;(provider Dependency (-> any/c))
+; Represents a provider for 'dependency'
+; Provides the value of 'promise'
+
+#;(hash/c dependency? promise?)
+(define dependencies (make-parameter (hasheq)))
+
+#;([predicate?] -> dependency?)
+(define (make-dependency [guard (const #t)])
+  (dependency guard))
+
+#;(dependency? -> any/c)
+; Get the value of a dependency according to its current provider.
+; Error if not provided.
+(define (dependency-get dep)
+  (define promise (hash-ref (dependencies)
+                            dep
+                            (lambda () (error 'depdendency-get "dependency not provided: ~a" dep))))
+  (force promise))
+
+(define-syntax-rule (make-provider dep body) (provider dep (lambda () body)))
+
+(define-syntax-rule
+  (with-providers (provider ...)
+    body
+    ...)
+  (with-providers/proc (seteq provider ...)
+    (lambda () body ...)))
+
+#;((sequence/c provider?) (-> any) -> any)
+; evaluate thnk with providers active
+(define (with-providers/proc prvs thnk)
+  (parameterize ([dependencies (hash-union (dependencies) (providers->dependency-hash prvs))])
+    (thnk)))
+
+#;((sequence/c provider?) -> (hash/c dependency? promise?))
+; convert the sequence of providers to a mapping from dependencies to a promise holding its provided value.
+(define (providers->dependency-hash prvs)
+  (for/hasheq ([prv prvs])
+    (values (provider-dependency prv) (delay ((provider-thunk prv))))))
+
 (module+ test
-  (require rackunit))
+  (test-case "simple banking"
+    (define deposits-dep (make-dependency number?))
+    (define withdrawals-dep (make-dependency number?))
+    (define balance-dep (make-dependency number?))
 
-;; Notice
-;; To install (from within the package directory):
-;;   $ raco pkg install
-;; To install (once uploaded to pkgs.racket-lang.org):
-;;   $ raco pkg install <<name>>
-;; To uninstall:
-;;   $ raco pkg remove <<name>>
-;; To view documentation:
-;;   $ raco docs <<name>>
-;;
-;; For your convenience, we have included LICENSE-MIT and LICENSE-APACHE files.
-;; If you would prefer to use a different license, replace those files with the
-;; desired license.
-;;
-;; Some users like to add a `private/` directory, place auxiliary files there,
-;; and require them in `main.rkt`.
-;;
-;; See the current version of the racket style guide here:
-;; http://docs.racket-lang.org/style/index.html
+    (define (get-balance)
+      (dependency-get balance-dep))
 
-;; Code here
+    ; order doesn't matter
+    (define balance-provider (make-provider balance-dep (- (dependency-get deposits-dep)
+                                                           (dependency-get withdrawals-dep))))
+    (define deposits-provider (make-provider deposits-dep 4))
+    (define withdrawals-provider (make-provider withdrawals-dep 1))
 
-
-
-(module+ test
-  ;; Any code in this `test` submodule runs when this file is run using DrRacket
-  ;; or with `raco test`. The code here does not run when this file is
-  ;; required by another module.
-
-  (check-equal? (+ 2 2) 4))
-
-(module+ main
-  ;; (Optional) main submodule. Put code here if you need it to be executed when
-  ;; this file is run using DrRacket or the `racket` executable.  The code here
-  ;; does not run when this file is required by another module. Documentation:
-  ;; http://docs.racket-lang.org/guide/Module_Syntax.html#%28part._main-and-test%29
-
-  (require racket/cmdline)
-  (define who (box "world"))
-  (command-line
-    #:program "my-program"
-    #:once-each
-    [("-n" "--name") name "Who to say hello to" (set-box! who name)]
-    #:args ()
-    (printf "hello ~a~n" (unbox who))))
+    ; order doesn't matter
+    (check-equal? (with-providers (balance-provider deposits-provider withdrawals-provider)
+                    (get-balance))
+                  3))
+  (test-case "provide and get"
+    (define dep (make-dependency))
+    (define prv (make-provider dep 42))
+    (check-exn #rx"not provided" (lambda () (dependency-get dep)))
+    (check-equal? (with-providers (prv) (dependency-get dep))
+                  42))
+  (test-case "provider body runs at most once per with-providers"
+    (define eval-count 0)
+    (define dep (make-dependency))
+    (define prv (make-provider dep (begin (set! eval-count (add1 eval-count))
+                                          42)))
+    (check-equal? eval-count 0)
+    (with-providers (prv) (void))
+    ; providing doesn't force the body
+    (check-equal? eval-count 0)
+    (check-equal? (with-providers (prv) (list (dependency-get dep) (dependency-get dep)))
+                  '(42 42))
+    ; getting forces the body, only runs once, even for multiple gets
+    (check-equal? eval-count 1)
+    ; provider re-evaluates for a new with-providers
+    (check-equal? (with-providers (prv) (list (dependency-get dep) (dependency-get dep)))
+                  '(42 42))
+    (check-equal? eval-count 2))
+  (test-case "provider with dependency"
+    (define num-dep (make-dependency number?))
+    (define bignum-dep (make-dependency number?))
+    (define num-provider (make-provider num-dep 1))
+    (define other-num-provider (make-provider num-dep 3))
+    (define bignum-provider (make-provider bignum-dep (add1 (dependency-get num-dep))))
+    (check-exn #rx"not provided"
+               (lambda () (with-providers (bignum-provider) (dependency-get bignum-dep))))
+    (check-exn #rx"not provided"
+               (lambda () (with-providers (num-provider) (dependency-get bignum-dep))))
+    ; order doesn't matter
+    (check-equal? (with-providers (bignum-provider num-provider) (dependency-get bignum-dep))
+                  2)
+    ; swapping indirect provider changes dependent provider's value
+    ; regression test: the provider's first resolution was used for all future with-provider expressions.
+    ; A little too lazy.
+    (check-equal? (with-providers (bignum-provider other-num-provider) (dependency-get bignum-dep))
+                  4)))
