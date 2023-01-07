@@ -30,10 +30,10 @@
 ; Get the value of a dependency according to its current provider.
 ; Error if not provided.
 (define (dependency-get dep)
-  (define promise (hash-ref (dependencies)
+  (define thnk (hash-ref (dependencies)
                             dep
                             (lambda () (error 'depdendency-get "dependency not provided: ~a" dep))))
-  (force promise))
+  (thnk))
 
 (define-syntax-rule (make-provider dep body) (provider dep (lambda () body)))
 
@@ -47,14 +47,16 @@
 #;((sequence/c provider?) (-> any) -> any)
 ; evaluate thnk with providers active
 (define (with-providers/proc prvs thnk)
-  (parameterize ([dependencies (hash-union (dependencies) (providers->dependency-hash prvs))])
+  (parameterize ([dependencies (hash-union (dependencies)
+                                           (providers->dependency-hash prvs)
+                                           #:combine (lambda (a b) b))])
     (thnk)))
 
-#;((sequence/c provider?) -> (hash/c dependency? promise?))
+#;((sequence/c provider?) -> (hash/c dependency? (-> any/c)))
 ; convert the sequence of providers to a mapping from dependencies to a promise holding its provided value.
 (define (providers->dependency-hash prvs)
   (for/hasheq ([prv prvs])
-    (values (provider-dependency prv) (delay ((provider-thunk prv))))))
+    (values (provider-dependency prv) (provider-thunk prv))))
 
 (module+ test
   (test-case "simple banking"
@@ -81,7 +83,8 @@
     (check-exn #rx"not provided" (lambda () (dependency-get dep)))
     (check-equal? (with-providers (prv) (dependency-get dep))
                   42))
-  (test-case "provider body runs at most once per with-providers"
+  ; currently, we over-evaluate to accomodate dependent providers
+  #;(test-case "provider body runs at most once per with-providers"
     (define eval-count 0)
     (define dep (make-dependency))
     (define prv (make-provider dep (begin (set! eval-count (add1 eval-count))
@@ -115,4 +118,26 @@
     ; regression test: the provider's first resolution was used for all future with-provider expressions.
     ; A little too lazy.
     (check-equal? (with-providers (bignum-provider other-num-provider) (dependency-get bignum-dep))
-                  4)))
+                  4))
+  (test-case "change provider"
+    (define dep (make-dependency))
+    (define prv (make-provider dep 1))
+    (define other-prv (make-provider dep 2))
+    (check-equal? (with-providers (prv)
+                    (list (dependency-get dep)
+                          (with-providers (other-prv) (dependency-get dep))
+                          (dependency-get dep)))
+                  '(1 2 1)))
+  (test-case "change provider with dependent provider"
+    (define num-dep (make-dependency number?))
+    (define bignum-dep (make-dependency number?))
+    (define num-provider (make-provider num-dep 1))
+    (define other-num-provider (make-provider num-dep 3))
+    (define bignum-provider (make-provider bignum-dep (add1 (dependency-get num-dep))))
+    (check-equal? (with-providers (bignum-provider num-provider)
+                    (list (dependency-get bignum-dep)
+                          ; don't re-provide bignum
+                          (with-providers (other-num-provider)
+                            (dependency-get bignum-dep))
+                          (dependency-get bignum-dep)))
+                  '(2 4 2))))
