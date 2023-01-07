@@ -4,7 +4,6 @@
 (provide)
 
 (require racket/function
-         racket/promise
          racket/set
          racket/hash)
 
@@ -17,9 +16,9 @@
 ; A Provider is a
 #;(provider Dependency (-> any/c))
 ; Represents a provider for 'dependency'
-; Provides the value of 'promise'
+; Provides the value of 'thnk'
 
-#;(hash/c dependency? promise?)
+#;(hash/c dependency? (-> any/c))
 (define dependencies (make-parameter (hasheq)))
 
 #;([predicate?] -> dependency?)
@@ -53,7 +52,7 @@
     (thnk)))
 
 #;((sequence/c provider?) -> (hash/c dependency? (-> any/c)))
-; convert the sequence of providers to a mapping from dependencies to a promise holding its provided value.
+; convert the sequence of providers to a mapping from dependencies to a thunk of its provided value.
 (define (providers->dependency-hash prvs)
   (for/hasheq ([prv prvs])
     (values (provider-dependency prv) (provider-thunk prv))))
