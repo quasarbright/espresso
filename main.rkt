@@ -4,7 +4,9 @@
 (require racket/contract)
 (provide (contract-out
           [rename make-dependency dependency (->* () ((-> any/c any/c)) dependency?)]
-          [dependency-get (-> dependency? any)])
+          [dependency-get (-> dependency? any)]
+          [dependency-provided? (-> dependency? boolean?)]
+          [assert-dependency-provided (->* (dependency?) (symbol?) void?)])
          (rename-out [make-provider provider])
          dependency?
          provider?
@@ -45,6 +47,19 @@
   (if (guard val)
       val
       (error 'dependency-get "dependency guard violated: ~a ~a" dep val)))
+
+#;(dependency? -> boolean?)
+; Is the dependenct currently provided?
+; Does not evaluate the provider's value.
+(define (dependency-provided? dep)
+  (hash-has-key? (dependencies) dep))
+
+#;(dependency? [symbol?] -> void?)
+; Error if dep is not currently provided.
+; Does not evaluate the provider's value.
+(define (assert-dependency-provided dep [who 'assert-dependency-provided])
+  (unless (dependency-provided? dep)
+    (error who "dependency not provided: ~a" dep)))
 
 (define-syntax make-provider
   (syntax-parser
@@ -179,4 +194,16 @@
     (define prv1 (make-provider dep 1))
     (define prv2 (make-provider dep 2))
     (check-exn #rx"multiple providers of the same dependency were supplied"
-               (lambda () (with-providers (prv1 prv2) dep)))))
+               (lambda () (with-providers (prv1 prv2) dep))))
+  (test-case "dependency-provided?"
+    (define dep (make-dependency))
+    (check-false (dependency-provided? dep))
+    (define prv (make-provider dep 1))
+    (check-true (with-providers (prv) (dependency-provided? dep)))
+    (check-false (dependency-provided? dep)))
+  (test-case "assert-dependency-provided"
+    (define dep (make-dependency))
+    (check-exn #rx"not provided" (lambda () (assert-dependency-provided dep)))
+    (define prv (make-provider dep 1))
+    (with-providers (prv) (assert-dependency-provided dep))
+    (check-exn #rx"not provided" (lambda () (assert-dependency-provided dep)))))
