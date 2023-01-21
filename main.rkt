@@ -19,8 +19,8 @@
 
 (struct dependency [guard] #:transparent)
 ; A Dependency is a
-#;(dependency predicate?)
-; Represents an injected dependency whose values must satisfy 'guard'
+#;(dependency (any/c -> any))
+; Represents an injected dependency whose provided values pass through 'guard'
 
 (struct provider [dependency thunk] #:transparent)
 ; A Provider is a
@@ -32,21 +32,20 @@
 (define dependencies (make-parameter (hasheq)))
 
 #;([predicate?] -> dependency?)
-(define (make-dependency [guard (const #t)])
+(define (make-dependency [guard (lambda (x) x)])
   (dependency guard))
 
 #;(dependency? -> any/c)
 ; Get the value of a dependency according to its current provider.
-; Error if not provided or if the dependency's guard is violated.
+; Applies the value to the guard procedure.
+; Error if not provided.
 (define (dependency-get dep)
   (define thnk (hash-ref (dependencies)
                          dep
                          (lambda () (error 'depdendency-get "dependency not provided: ~a" dep))))
   (define val (thnk))
   (define guard (dependency-guard dep))
-  (if (guard val)
-      val
-      (error 'dependency-get "dependency guard violated: ~a ~a" dep val)))
+  (guard val))
 
 #;(dependency? -> boolean?)
 ; Is the dependenct currently provided?
@@ -93,9 +92,9 @@
 
 (module+ test
   (test-case "simple banking"
-    (define deposits-dep (make-dependency number?))
-    (define withdrawals-dep (make-dependency number?))
-    (define balance-dep (make-dependency number?))
+    (define deposits-dep (make-dependency))
+    (define withdrawals-dep (make-dependency))
+    (define balance-dep (make-dependency))
 
     (define (get-balance)
       (dependency-get balance-dep))
@@ -135,8 +134,8 @@
                   '(42 42))
     (check-equal? eval-count 2))
   (test-case "provider with dependency"
-    (define num-dep (make-dependency number?))
-    (define bignum-dep (make-dependency number?))
+    (define num-dep (make-dependency))
+    (define bignum-dep (make-dependency))
     (define num-provider (make-provider num-dep 1))
     (define other-num-provider (make-provider num-dep 3))
     (define bignum-provider (make-provider bignum-dep (add1 (dependency-get num-dep))))
@@ -162,8 +161,8 @@
                           (dependency-get dep)))
                   '(1 2 1)))
   (test-case "change provider with dependent provider"
-    (define num-dep (make-dependency number?))
-    (define bignum-dep (make-dependency number?))
+    (define num-dep (make-dependency))
+    (define bignum-dep (make-dependency))
     (define num-provider (make-provider num-dep 1))
     (define other-num-provider (make-provider num-dep 3))
     (define bignum-provider (make-provider bignum-dep (add1 (dependency-get num-dep))))
@@ -174,12 +173,17 @@
                             (dependency-get bignum-dep))
                           (dependency-get bignum-dep)))
                   '(2 4 2)))
-  (test-case "violate dependency guard"
-    (define num-dep (make-dependency number?))
+  (test-case "error dependency guard"
+    (define num-dep (make-dependency (lambda (x) (if (number? x) x (error "expected: number?")))))
     (define prv (make-provider num-dep "two"))
     ; error on get, not provide
     (check-pred void? (with-providers (prv) (void)))
-    (check-exn #rx"guard violated" (lambda () (with-providers (prv) (dependency-get num-dep)))))
+    (check-exn #rx"expected: number?" (lambda () (with-providers (prv) (dependency-get num-dep)))))
+  (test-case "transforming dependency guard"
+    (define dep (make-dependency add1))
+    (define prv (make-provider dep 1))
+    (check-equal? (with-providers (prv) (list (dependency-get dep) (dependency-get dep)))
+                  '(2 2)))
   (test-case "supply non-dependency to make-provider"
     (check-exn #rx"expected: dependency?" (lambda () (make-provider 'not-a-dependency 42))))
   (test-case "supply non-provider to with-providers"
