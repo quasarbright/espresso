@@ -4,7 +4,7 @@
 (provide)
 
 (require racket/function
-         racket/set
+         racket/list
          racket/hash
          (for-syntax syntax/parse racket/base))
 
@@ -47,12 +47,17 @@
 (define-syntax with-providers
   (syntax-parser
     [(_ ((~var provider (expr/c #'provider?)) ...) body ...+)
-     #'(with-providers/proc (seteq provider.c ...)
+     #'(with-providers/proc (list provider.c ...)
          (lambda () body ...))]))
 
-#;((sequence/c provider?) (-> any) -> any)
-; evaluate thnk with providers active
+#;((listof provider?) (-> any) -> any)
+; Evaluate thnk with providers active.
+; Error if there are multiple providers of the same dependency.
 (define (with-providers/proc prvs thnk)
+  (define deps (map provider-dependency prvs))
+  (define dup (check-duplicates deps eq?))
+  (when dup
+    (error 'with-providers "multiple providers of the same dependency were supplied: ~a" dup))
   (parameterize ([dependencies (hash-union (dependencies)
                                            (providers->dependency-hash prvs)
                                            #:combine (lambda (a b) b))])
@@ -157,9 +162,14 @@
     (check-exn #rx"expected: dependency?" (lambda () (make-provider 'not-a-dependency 42))))
   (test-case "supply non-provider to with-providers"
     (check-exn #rx"" (lambda () (with-providers ('not-a-provider) (void)))))
-  #;(test-case "duplicate provider"
+  (test-case "duplicate provider"
     (define dep (make-dependency))
     (define prv (make-provider dep 1))
-    (check-exn #rx"duplicate" (lambda () (with-providers (prv prv) dep))))
+    (check-exn #rx"multiple providers of the same dependency were supplied"
+               (lambda () (with-providers (prv prv) dep))))
   (test-case "two different providers of same dependency"
-    (void 'todo)))
+    (define dep (make-dependency))
+    (define prv1 (make-provider dep 1))
+    (define prv2 (make-provider dep 2))
+    (check-exn #rx"multiple providers of the same dependency were supplied"
+               (lambda () (with-providers (prv1 prv2) dep)))))
