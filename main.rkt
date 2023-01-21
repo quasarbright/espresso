@@ -1,7 +1,14 @@
 #lang racket/base
 
 (module+ test (require rackunit))
-(provide)
+(require racket/contract)
+(provide (contract-out
+          [rename make-dependency dependency (->* () ((-> any/c any/c)) dependency?)]
+          [dependency-get (-> dependency? any)])
+         (rename-out [make-provider provider])
+         dependency?
+         provider?
+         with-providers)
 
 (require racket/function
          racket/list
