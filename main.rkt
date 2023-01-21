@@ -27,12 +27,16 @@
 
 #;(dependency? -> any/c)
 ; Get the value of a dependency according to its current provider.
-; Error if not provided.
+; Error if not provided or if the dependency's guard is violated.
 (define (dependency-get dep)
   (define thnk (hash-ref (dependencies)
-                            dep
-                            (lambda () (error 'depdendency-get "dependency not provided: ~a" dep))))
-  (thnk))
+                         dep
+                         (lambda () (error 'depdendency-get "dependency not provided: ~a" dep))))
+  (define val (thnk))
+  (define guard (dependency-guard dep))
+  (if (guard val)
+      val
+      (error 'dependency-get "dependency guard violated: ~a ~a" dep val)))
 
 (define-syntax-rule (make-provider dep body) (provider dep (lambda () body)))
 
@@ -139,4 +143,16 @@
                           (with-providers (other-num-provider)
                             (dependency-get bignum-dep))
                           (dependency-get bignum-dep)))
-                  '(2 4 2))))
+                  '(2 4 2)))
+  (test-case "violate dependency guard"
+    (define num-dep (make-dependency number?))
+    (define prv (make-provider num-dep "two"))
+    ; error on get, not provide
+    (check-pred void? (with-providers (prv) (void)))
+    (check-exn #rx"guard violated" (lambda () (with-providers (prv) (dependency-get num-dep)))))
+  (test-case "provide non-dependency to make-provider"
+    (void 'todo))
+  (test-case "duplicate provider"
+    (void 'todo))
+  (test-case "two different providers of same dependency"
+    (void 'todo)))
