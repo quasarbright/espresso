@@ -5,7 +5,8 @@
 
 (require racket/function
          racket/set
-         racket/hash)
+         racket/hash
+         (for-syntax syntax/parse racket/base))
 
 (struct dependency [guard] #:transparent)
 ; A Dependency is a
@@ -38,14 +39,16 @@
       val
       (error 'dependency-get "dependency guard violated: ~a ~a" dep val)))
 
-(define-syntax-rule (make-provider dep body) (provider dep (lambda () body)))
+(define-syntax make-provider
+  (syntax-parser
+    [(_ (~var dep (expr/c #'dependency?)) body)
+     #'(provider dep.c (lambda () body))]))
 
-(define-syntax-rule
-  (with-providers (provider ...)
-    body
-    ...)
-  (with-providers/proc (seteq provider ...)
-    (lambda () body ...)))
+(define-syntax with-providers
+  (syntax-parser
+    [(_ ((~var provider (expr/c #'provider?)) ...) body ...+)
+     #'(with-providers/proc (seteq provider.c ...)
+         (lambda () body ...))]))
 
 #;((sequence/c provider?) (-> any) -> any)
 ; evaluate thnk with providers active
@@ -150,9 +153,13 @@
     ; error on get, not provide
     (check-pred void? (with-providers (prv) (void)))
     (check-exn #rx"guard violated" (lambda () (with-providers (prv) (dependency-get num-dep)))))
-  (test-case "provide non-dependency to make-provider"
-    (void 'todo))
-  (test-case "duplicate provider"
-    (void 'todo))
+  (test-case "supply non-dependency to make-provider"
+    (check-exn #rx"expected: dependency?" (lambda () (make-provider 'not-a-dependency 42))))
+  (test-case "supply non-provider to with-providers"
+    (check-exn #rx"" (lambda () (with-providers ('not-a-provider) (void)))))
+  #;(test-case "duplicate provider"
+    (define dep (make-dependency))
+    (define prv (make-provider dep 1))
+    (check-exn #rx"duplicate" (lambda () (with-providers (prv prv) dep))))
   (test-case "two different providers of same dependency"
     (void 'todo)))
