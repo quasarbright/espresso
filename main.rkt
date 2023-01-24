@@ -6,14 +6,14 @@
           [rename make-dependency dependency (->* () ((-> any/c any/c)) dependency?)]
           [dependency-get (-> dependency? any)]
           [dependency-provided? (-> dependency? boolean?)]
-          [assert-dependency-provided (->* (dependency?) (symbol?) void?)])
+          [assert-dependency-provided (->* (dependency?) (symbol?) void?)]
+          [check-dependencies-provided (->* () #:rest (listof dependency?) (or/c #t string?))])
          (rename-out [make-provider provider])
          dependency?
          provider?
          with-providers)
 
-(require racket/function
-         racket/list
+(require racket/list
          racket/hash
          (for-syntax syntax/parse racket/base))
 
@@ -59,6 +59,16 @@
 (define (assert-dependency-provided dep [who 'assert-dependency-provided])
   (unless (dependency-provided? dep)
     (error who "dependency not provided: ~a" dep)))
+
+#;(dependency? ... -> (or/c #t string?))
+; #t is the dependencies are provided, an error message string otherwise.
+; Useful for #:pre/desc in a ->* contract.
+(define (check-dependencies-provided . deps)
+  (let/cc k
+    (for ([dep deps])
+      (unless (dependency-provided? dep)
+        (k (format "dependency not provided: ~a" dep))))
+    #t))
 
 (define-syntax make-provider
   (syntax-parser
